@@ -15,20 +15,48 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xrdp xfce4 xfce4-goodies dbus-x11 x11-xserver-utils netcat-openbsd
 
-          echo "startxfce4" | sudo tee /etc/skel/.xsession
-          echo "startxfce4" | sudo tee /root/.xsession
+          # Configure xrdp to use XFCE
+          echo "startxfce4" | sudo tee /etc/xrdp/startwm.sh
+          sudo chmod +x /etc/xrdp/startwm.sh
+
+          # Fix D-Bus configuration
+          sudo sed -i 's/^.*policykit=.*/policykit=true/' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/^.*new_cursors=.*/new_cursors=true/' /etc/xrdp/xrdp.ini
+
+          # Enable D-Bus for XRDP sessions
+          sudo systemctl enable dbus
+          sudo systemctl start dbus
 
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
       - name: Create RDP user with secure password
         run: |
-          chars='A-Za-z0-9!@#$%^&*()_+{}[]:;,.<>?'
-          password=$(tr -dc "$chars" < /dev/urandom | head -c 20)
+          password=$(python3 - << 'EOF'
+import secrets
+import string
+
+alphabet = string.ascii_letters + string.digits + "!@#$%^&*()_+{}[]:;,.<>?"
+print(''.join(secrets.choice(alphabet) for _ in range(20)))
+EOF
+)
 
           sudo useradd -m -s /bin/bash rdp
           echo "rdp:$password" | sudo chpasswd
           sudo usermod -aG sudo rdp
+
+          # Configure XFCE session for RDP user
+          sudo -u rdp mkdir -p /home/rdp/.config
+          echo "startxfce4" | sudo -u rdp tee /home/rdp/.xsession
+          sudo chown rdp:rdp /home/rdp/.xsession
+
+          # Fix XDG_CONFIG_DIRS for RDP sessions
+          sudo -u rdp bash -c 'echo "export XDG_CONFIG_DIRS=/etc/xdg" >> /home/rdp/.bashrc'
+          sudo -u rdp bash -c 'echo "export XDG_CONFIG_DIRS=/etc/xdg" >> /home/rdp/.profile'
+
+          # Create XFCE config directory
+          sudo -u rdp mkdir -p /home/rdp/.config/xfce4
+          sudo chown -R rdp:rdp /home/rdp/.config
 
           echo "RDP_CREDS=User: rdp | Password: $password" >> "$GITHUB_ENV"
 
